@@ -1,0 +1,168 @@
+// @version=5
+// © QUANT RICK - TEMACD Multi-Symbol Screener & Alert Dashboard
+// This is NOT a strategy, it's a screener indicator that scans up to 40 symbols
+// and creates a table + unified alert for LONG/SHORT conditions
+// Free plan: 40 security calls = 40 symbols scanned per chart
+indicator("TEMACD Multi-Symbol Screener & Alert (Quant Rick)", overlay=true, max_labels_count=500)
+
+// ═══════════════════════════════════════════════
+// INPUTS - TEMACD params (must match original)
+// ═══════════════════════════════════════════════
+len_1      = input.int(5,   title="EMA 1 Length", minval=1, group="TEMACD Parameters")
+len_2      = input.int(50,  title="EMA 2 Length", minval=1, group="TEMACD Parameters")
+len_3      = input.int(222, title="EMA 3 Length", minval=1, group="TEMACD Parameters")
+fastLen    = input.int(61,  title="MACD Fast Length", minval=1, group="TEMACD Parameters")
+slowLen    = input.int(70,  title="MACD Slow Length", minval=1, group="TEMACD Parameters")
+macdSigLen = input.int(15,  title="MACD Signal Length", minval=1, group="TEMACD Parameters")
+
+// Symbols to scan - free plan allows up to 40 security() calls
+// Edit these to your watchlist - recommended 30-stock diversified universe for Power Law
+s01 = input.symbol("NASDAQ:TQQQ",  title="Symbol 01", group="Symbols (Free max 40)")
+s02 = input.symbol("NASDAQ:QQQ",   title="Symbol 02", group="Symbols")
+s03 = input.symbol("AMEX:SPY",     title="Symbol 03", group="Symbols")
+s04 = input.symbol("NASDAQ:NVDA",  title="Symbol 04", group="Symbols")
+s05 = input.symbol("NASDAQ:AAPL",  title="Symbol 05", group="Symbols")
+s06 = input.symbol("NASDAQ:MSFT",  title="Symbol 06", group="Symbols")
+s07 = input.symbol("NASDAQ:AMZN",  title="Symbol 07", group="Symbols")
+s08 = input.symbol("NASDAQ:META",  title="Symbol 08", group="Symbols")
+s09 = input.symbol("NASDAQ:GOOGL", title="Symbol 09", group="Symbols")
+s10 = input.symbol("NASDAQ:TSLA",  title="Symbol 10", group="Symbols")
+s11 = input.symbol("AMEX:XLK",     title="Symbol 11", group="Symbols")
+s12 = input.symbol("AMEX:XLV",     title="Symbol 12", group="Symbols")
+s13 = input.symbol("AMEX:XLE",     title="Symbol 13", group="Symbols")
+s14 = input.symbol("AMEX:GLD",     title="Symbol 14", group="Symbols")
+s15 = input.symbol("AMEX:IWM",     title="Symbol 15", group="Symbols")
+s16 = input.symbol("NYSE:BRK.B",   title="Symbol 16", group="Symbols")
+s17 = input.symbol("NASDAQ:AVGO",  title="Symbol 17", group="Symbols")
+s18 = input.symbol("NYSE:JNJ",     title="Symbol 18", group="Symbols")
+s19 = input.symbol("NYSE:XOM",     title="Symbol 19", group="Symbols")
+s20 = input.symbol("AMEX:XLF",     title="Symbol 20", group="Symbols")
+
+show_only_signals = input.bool(false, title="Show only symbols with signal?", group="Display Options")
+timeframe_input = input.timeframe(timeframe.period, title="Scanning Timeframe (use Daily!)", group="Display Options")
+
+// ═══════════════════════════════════════════════
+// CORE TEMACD LOGIC - reusable function
+// ═══════════════════════════════════════════════
+get_temacd_data() =>
+    e1 = ta.ema(close, len_1)
+    e2 = ta.ema(close, len_2)
+    e3 = ta.ema(close, len_3)
+    macd_line = ta.ema(close, fastLen) - ta.ema(close, slowLen)
+    sig_line  = ta.ema(macd_line, macdSigLen)
+    delta     = macd_line - sig_line
+
+    long_cond  = ta.crossover(delta, 0) or ta.crossover(e1, e2) or ta.crossover(e1, e3) or ta.crossover(e2, e3)
+    short_cond = ta.crossunder(delta, 0) or ta.crossunder(e1, e2) or ta.crossunder(e1, e3) or ta.crossunder(e2, e3)
+
+    // Additional context
+    trend_state = e1 > e2 and e2 > e3 ? "STRONG BULL" : e1 > e2 ? "BULLISH" : e1 < e2 and e2 < e3 ? "STRONG BEAR" : "BEARISH/ROTATION"
+    trigger_detail = ""
+    if ta.crossover(delta, 0)
+        trigger_detail += "MACD Histogram Cross "
+    if ta.crossover(e1, e2)
+        trigger_detail += "EMA5>EMA50 "
+    if ta.crossover(e1, e3)
+        trigger_detail += "EMA5>EMA222 "
+    if ta.crossover(e2, e3)
+        trigger_detail += "EMA50>EMA222 "
+    if ta.crossunder(delta, 0)
+        trigger_detail += "MACD CrossUnder "
+    if ta.crossunder(e1, e2)
+        trigger_detail += "EMA5<EMA50 "
+    if ta.crossunder(e1, e3)
+        trigger_detail += "EMA5<EMA222 "
+    if ta.crossunder(e2, e3)
+        trigger_detail += "EMA50<EMA222 "
+    if trigger_detail == ""
+        trigger_detail := "No cross today"
+
+    [long_cond, short_cond, delta, close, trend_state, trigger_detail]
+
+
+// ═══════════════════════════════════════════════
+// REQUEST SECURITY FOR ALL SYMBOLS
+// ═══════════════════════════════════════════════
+[l01, s_01, d01, p01, trend01, trig01] = request.security(s01, timeframe_input, get_temacd_data())
+[l02, s_02, d02, p02, trend02, trig02] = request.security(s02, timeframe_input, get_temacd_data())
+[l03, s_03, d03, p03, trend03, trig03] = request.security(s03, timeframe_input, get_temacd_data())
+[l04, s_04, d04, p04, trend04, trig04] = request.security(s04, timeframe_input, get_temacd_data())
+[l05, s_05, d05, p05, trend05, trig05] = request.security(s05, timeframe_input, get_temacd_data())
+[l06, s_06, d06, p06, trend06, trig06] = request.security(s06, timeframe_input, get_temacd_data())
+[l07, s_07, d07, p07, trend07, trig07] = request.security(s07, timeframe_input, get_temacd_data())
+[l08, s_08, d08, p08, trend08, trig08] = request.security(s08, timeframe_input, get_temacd_data())
+[l09, s_09, d09, p09, trend09, trig09] = request.security(s09, timeframe_input, get_temacd_data())
+[l10, s_10, d10, p10, trend10, trig10] = request.security(s10, timeframe_input, get_temacd_data())
+[l11, s_11, d11, p11, trend11, trig11] = request.security(s11, timeframe_input, get_temacd_data())
+[l12, s_12, d12, p12, trend12, trig12] = request.security(s12, timeframe_input, get_temacd_data())
+[l13, s_13, d13, p13, trend13, trig13] = request.security(s13, timeframe_input, get_temacd_data())
+[l14, s_14, d14, p14, trend14, trig14] = request.security(s14, timeframe_input, get_temacd_data())
+[l15, s_15, d15, p15, trend15, trig15] = request.security(s15, timeframe_input, get_temacd_data())
+[l16, s_16, d16, p16, trend16, trig16] = request.security(s16, timeframe_input, get_temacd_data())
+[l17, s_17, d17, p17, trend17, trig17] = request.security(s17, timeframe_input, get_temacd_data())
+[l18, s_18, d18, p18, trend18, trig18] = request.security(s18, timeframe_input, get_temacd_data())
+[l19, s_19, d19, p19, trend19, trig19] = request.security(s19, timeframe_input, get_temacd_data())
+[l20, s_20, d20, p20, trend20, trig20] = request.security(s20, timeframe_input, get_temacd_data())
+
+// ═══════════════════════════════════════════════
+// DASHBOARD TABLE
+// ═══════════════════════════════════════════════
+var table scrTable = table.new(position.top_right, 5, 22, bgcolor=color.new(color.black, 15), border_width=1, frame_color=color.gray)
+
+f_format_symbol(s) =>
+    str.tostring(s)
+
+if barstate.islast
+    // Header
+    table.cell(scrTable, 0, 0, "SYMBOL", bgcolor=color.rgb(40,40,40), text_color=color.white, text_size=size.small)
+    table.cell(scrTable, 1, 0, "PRICE", bgcolor=color.rgb(40,40,40), text_color=color.white, text_size=size.small)
+    table.cell(scrTable, 2, 0, "DELTA", bgcolor=color.rgb(40,40,40), text_color=color.white, text_size=size.small)
+    table.cell(scrTable, 3, 0, "SIGNAL", bgcolor=color.rgb(40,40,40), text_color=color.white, text_size=size.small)
+    table.cell(scrTable, 4, 0, "TRIGGER", bgcolor=color.rgb(40,40,40), text_color=color.white, text_size=size.small)
+
+    fill_row(row, symInput, lCond, sCond, deltaVal, priceVal, trend, trigger) =>
+        if not show_only_signals or lCond or sCond
+            bgCol = lCond ? color.new(color.green, 20) : sCond ? color.new(color.red, 20) : color.new(color.black, 40)
+            sigText = lCond ? "LONG ENTRY" : sCond ? "EXIT/SHORT" : "HOLD/" + trend
+            txtCol = lCond ? color.white : sCond ? color.white : color.gray
+            table.cell(scrTable, 0, row, f_format_symbol(symInput), text_color=color.white, bgcolor=bgCol, text_size=size.small)
+            table.cell(scrTable, 1, row, str.tostring(priceVal, "#.##"), text_color=color.white, bgcolor=bgCol, text_size=size.small)
+            table.cell(scrTable, 2, row, str.tostring(deltaVal, "#.####"), text_color=color.white, bgcolor=bgCol, text_size=size.small)
+            table.cell(scrTable, 3, row, sigText, text_color=txtCol, bgcolor=bgCol, text_size=size.small)
+            table.cell(scrTable, 4, row, trigger, text_color=txtCol, bgcolor=bgCol, text_size=size.tiny)
+
+    row = 1
+    fill_row(row, s01, l01, s_01, d01, p01, trend01, trig01), row += 1
+    fill_row(row, s02, l02, s_02, d02, p02, trend02, trig02), row += 1
+    fill_row(row, s03, l03, s_03, d03, p03, trend03, trig03), row += 1
+    fill_row(row, s04, l04, s_04, d04, p04, trend04, trig04), row += 1
+    fill_row(row, s05, l05, s_05, d05, p05, trend05, trig05), row += 1
+    fill_row(row, s06, l06, s_06, d06, p06, trend06, trig06), row += 1
+    fill_row(row, s07, l07, s_07, d07, p07, trend07, trig07), row += 1
+    fill_row(row, s08, l08, s_08, d08, p08, trend08, trig08), row += 1
+    fill_row(row, s09, l09, s_09, d09, p09, trend09, trig09), row += 1
+    fill_row(row, s10, l10, s_10, d10, p10, trend10, trig10), row += 1
+    fill_row(row, s11, l11, s_11, d11, p11, trend11, trig11), row += 1
+    fill_row(row, s12, l12, s_12, d12, p12, trend12, trig12), row += 1
+    fill_row(row, s13, l13, s_13, d13, p13, trend13, trig13), row += 1
+    fill_row(row, s14, l14, s_14, d14, p14, trend14, trig14), row += 1
+    fill_row(row, s15, l15, s_15, d15, p15, trend15, trig15), row += 1
+    fill_row(row, s16, l16, s_16, d16, p16, trend16, trig16), row += 1
+    fill_row(row, s17, l17, s_17, d17, p17, trend17, trig17), row += 1
+    fill_row(row, s18, l18, s_18, d18, p18, trend18, trig18), row += 1
+    fill_row(row, s19, l19, s_19, d19, p19, trend19, trig19), row += 1
+    fill_row(row, s20, l20, s_20, d20, p20, trend20, trig20), row += 1
+
+// ═══════════════════════════════════════════════
+// ALERTS - critical for automated scanning
+// ═══════════════════════════════════════════════
+any_long_trigger = l01 or l02 or l03 or l04 or l05 or l06 or l07 or l08 or l09 or l10 or l11 or l12 or l13 or l14 or l15 or l16 or l17 or l18 or l19 or l20
+any_short_trigger = s_01 or s_02 or s_03 or s_04 or s_05 or s_06 or s_07 or s_08 or s_09 or s_10 or s_11 or s_12 or s_13 or s_14 or s_15 or s_16 or s_17 or s_18 or s_19 or s_20
+
+alertcondition(any_long_trigger, title="[TEMACD] Novy LONG ENTRY", message="TEMACD Screener: Novy LONG ENTRY signal! Symbol: {{ticker}} close={{close}} time={{time}}")
+alertcondition(any_short_trigger, title="[TEMACD] Novy SHORT/EXIT signal", message="TEMACD Screener: Novy SHORT/EXIT signal! Symbol: {{ticker}} close={{close}} time={{time}}")
+
+// Plot only for visual reference - optional
+plot(ta.ema(close, len_1), color=color.new(color.blue, 0), title="EMA5")
+plot(ta.ema(close, len_2), color=color.new(color.white, 0), title="EMA50")
+plot(ta.ema(close, len_3), color=color.new(color.orange, 0), title="EMA222")
