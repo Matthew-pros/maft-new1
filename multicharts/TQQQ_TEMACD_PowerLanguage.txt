@@ -1,0 +1,108 @@
+// MultiCharts PowerLanguage Strategy
+// Translation of TradingView TQQQ TEMACD v5 - © QUANT RICK
+// For Daily Backtest on TQQQ, QQQ, SPY, MES continuous
+
+[LegacyColorValue = true]; 
+[SameAsSymbol = true];
+
+Inputs:
+    // TEMACD params – must match Pine exactly
+    len1(5),
+    len2(50),
+    len3(222),
+    fastLen(61),
+    slowLen(70),
+    macdLen(15),
+    Leverage(1),
+    TradeDirection("Long"), // Options: "Long", "Short", "Both"
+    StartDate(20180101), // yyyMMdd format – same as 01 Jan 2018
+    EndDate(21701231),
+    InitCapital(100000);
+
+Vars:
+    EMA1(0),
+    EMA2(0),
+    EMA3(0),
+    MACDLine(0),
+    aMACD(0),
+    delta(0),
+    longCond(false),
+    shortCond(false),
+    inDateRange(false),
+    longOK(false),
+    shortOK(false),
+    contracts(0),
+    equity(0);
+
+// Calculations – XAverage = EMA in MultiCharts
+EMA1 = XAverage(Close, len1);
+EMA2 = XAverage(Close, len2);
+EMA3 = XAverage(Close, len3);
+MACDLine = XAverage(Close, fastLen) - XAverage(Close, slowLen);
+aMACD = XAverage(MACDLine, macdLen);
+delta = MACDLine - aMACD;
+
+// Date range filter
+// Use DateToJulian and convert – simpler: use Date numeric yyyMMdd
+inDateRange = Date >= StartDate and Date <= EndDate;
+
+// Trade direction
+longOK = (TradeDirection = "Long") or (TradeDirection = "Both");
+shortOK = (TradeDirection = "Short") or (TradeDirection = "Both");
+
+// Crossover / Crossunder – PowerLanguage built-in
+// Crosses Over: series1 crosses over series2
+longCond = (delta crosses over 0) or (EMA1 crosses over EMA2) or (EMA1 crosses over EMA3) or (EMA2 crosses over EMA3);
+shortCond = (delta crosses under 0) or (EMA1 crosses under EMA2) or (EMA1 crosses under EMA3) or (EMA2 crosses under EMA3);
+
+// Position sizing – Original Pine: contracts = strategy.equity / close * leverage
+// In PowerLanguage: NetProfit + Initial Capital = total equity
+equity = InitCapital + NetProfit;
+// Avoid division by zero
+if Close > 0 then
+    contracts = (equity / Close) * Leverage
+else
+    contracts = 0;
+
+// Round down to integer shares for stocks, for futures use 1 contract minimum
+// For MES futures, override:
+if GetSymbolName = "MES" or GetSymbolName = "@MES" or GetSymbolName = "MES1!" then
+    contracts = 1; // MES $5 per point, size accordingly – adjust for account size if needed
+
+// Pyramiding control – allow only one entry direction at a time like original
+// Long entries
+if longCond and inDateRange and longOK then
+begin
+    if MarketPosition <= 0 then
+        Buy ("Long_Entry") contracts shares next bar at market;
+end;
+
+// Short entries
+if shortCond and inDateRange and shortOK then
+begin
+    if MarketPosition >= 0 then
+        SellShort ("Short_Entry") contracts shares next bar at market;
+end;
+
+// Exits – Original Pine uses strategy.exit stop=close which is effectively market close on opposite signal
+// In MultiCharts daily, we exit on next bar open (or close) when opposite signal
+if MarketPosition > 0 and shortCond then
+    Sell ("Exit_Long") next bar at market;
+
+if MarketPosition < 0 and longCond then
+    BuyToCover ("Exit_Short") next bar at market;
+
+// Plots – same colors as TradingView
+Plot1(EMA1, "EMA1", Blue);
+Plot2(EMA2, "EMA2", White);
+Plot3(EMA3, "EMA3", RGB(255,165,0)); // Orange
+
+// MACD pane – need to add in separate indicator for cleaner view, but can plot in same pane with scaling
+// For simplicity, plot delta as histogram in separate subchart: create second indicator TQQQ_TEMACD_Oscillator
+
+// Alert text for manual screening
+if longCond then
+    Print(DateToString(Date), " ", TimeToString(Time), " ", GetSymbolName, " TEMACD LONG ENTRY Close=", Close:0:2, " Delta=", delta:0:4, " EMA5/50/222=", EMA1:0:2, "/", EMA2:0:2, "/", EMA3:0:2);
+
+if shortCond then
+    Print(DateToString(Date), " ", TimeToString(Time), " ", GetSymbolName, " TEMACD SHORT/EXIT Close=", Close:0:2, " Delta=", delta:0:4);
