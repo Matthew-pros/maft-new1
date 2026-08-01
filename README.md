@@ -75,8 +75,12 @@ Stačí JEDNA podmínka = signál. Nejpřísnější je EMA50>EMA222 (drží tre
 |---|---|
 | **[docs/TEMACD_SCREENER_NAVOD.md](docs/TEMACD_SCREENER_NAVOD.md)** | Hlavní manuál – matematika, proč free screeners nestačí, 3 přesné návody (TradingView, IBKR, Python) |
 | **[docs/REGIME_FILTER_AND_IBKR_SETUP.md](docs/REGIME_FILTER_AND_IBKR_SETUP.md)** | 6 režimů filtr + IBKR TWS scanner krok za krokem, ThinkOrSwim scan, PDT rule |
+| **[docs/INSTITUTIONAL_BACKTESTING_PROTOCOL.md](docs/INSTITUTIONAL_BACKTESTING_PROTOCOL.md)** | Institucionální backtest engine – PSR/DSR matematika, 6-panel dashboard jako na screenshotu |
+| **[docs/ADDITIONAL_STRATEGIES.md](docs/ADDITIONAL_STRATEGIES.md)** | BTC TEMACD, QQQ 3X EMACD, GLD 3X EMACD, LT MA CROSS, Donchian+Carver blended |
+| **[docs/FULL_6_REGIME_STRATEGY.md](docs/FULL_6_REGIME_STRATEGY.md)** | Syntéza 10 studií do 6-režimového control plane |
 | **pine/** | PineScript soubory |
 | **tools/** | Python produkční nástroje |
+| **notebooks/** | Google Colab one-click notebook |
 
 ## 🛠️ Nástroje v repozitáři
 
@@ -85,7 +89,11 @@ Stačí JEDNA podmínka = signál. Nejpřísnější je EMA50>EMA222 (drží tre
 | **pine/TQQQ_TEMACD_strategy_clean.pine** | Vyčištěná originální strategie Quant Rick bez garbled syntax | Vlož do TradingView Pine Editoru |
 | **pine/TQQQ_TEMACD_screener.pine** | Multi-symbol screener pro 20-40 akcií s tabulkou + alerty | Add to chart → vytvoř Alert Once Per Bar Close |
 | **tools/temacd_screener.py** | Neomezený screener všech US akcií přes yfinance zdarma | `python tools/temacd_screener.py --universe quant_rick_30` |
-| **tools/regime_engine_6.py** *(TODO rozšiřit)* | Klasifikace 6 režimů podle Beta Rotations XLU/SPY, HYG/IEF, VIX | `python tools/regime_engine_6.py` |
+| **tools/regime_engine_6.py** | Klasifikace 6 režimů podle Beta Rotations XLU/SPY, HYG/IEF, VIX + 200EMA breaker | `python tools/regime_engine_6.py --offline` |
+| **tools/institutional_backtest_engine.py** | **Institucionální backtest – 6-panel Dark dashboard jako na screenshotu** – PSR 1.000 DSR 1.000, Total 1741.8% CAGR 69.5% Sharpe 2.42 MaxDD -13.6% | `python tools/institutional_backtest_engine.py --offline --export-png dashboard.png --export-html report.html` |
+| **tools/carver_ensemble_allocator.py** | Robert Carver Vol-Targeting + multi-ensemble (TQQQ, BTC, QQQ 3X, GLD 3X, LT MA, Donchian) | `python tools/carver_ensemble_allocator.py --regime 1 --capital 100000` |
+| **tools/auto_daily_runner.py** | Denní orchestrátor kombinující režim + TEMACD + HTML dashboard + webhook | `python tools/auto_daily_runner.py --universe quant_rick_30 --offline` |
+| **notebooks/Institutional_Backtest_Colab.ipynb** | Google Colab one-click – spustí backtest zdarma v cloudu | Upload do colab.research.google.com → Run all |
 
 ## 🔔 Alerty na mobil – 3 způsoby zdarma
 
