@@ -296,6 +296,62 @@ class ReportingEngine:
         plt.tight_layout()
         return fig
 
+    def plot_factor_exposure(self, factor_exposure: pd.DataFrame) -> plt.Figure:
+        """
+        Factor exposure over time – each factor as line
+        Economic justification: shows style tilts over time (e.g., Market beta, Value, Momentum)
+        Each backtest must show factor exposure in time as per prompt
+
+        Args:
+            factor_exposure: DataFrame index dates, columns factors (Market, Size, Value, etc), values exposure (beta or score)
+
+        Returns:
+            Figure
+        """
+        if not isinstance(factor_exposure, pd.DataFrame) or factor_exposure.empty:
+            fig, ax = plt.subplots(figsize=(12, 4))
+            ax.text(0.5, 0.5, "No factor exposure data", ha='center')
+            return fig
+
+        fig, ax = plt.subplots(figsize=(14, 6), facecolor='white')
+        # Deterministic sorted columns
+        for col in sorted(factor_exposure.columns):
+            ax.plot(factor_exposure.index, factor_exposure[col], label=col, linewidth=1.2, alpha=0.8)
+
+        ax.set_title('Factor Exposure Over Time (Market, Size, Value, Growth, Momentum, Quality, LowVol, Carry, Commodity, Duration, Dollar, Inflation)', fontweight='bold')
+        ax.set_ylabel('Exposure (beta / score)')
+        ax.set_xlabel('Date')
+        ax.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+        ax.legend(fontsize=8, ncol=3, loc='upper left')
+        ax.grid(alpha=0.3)
+        plt.tight_layout()
+        return fig
+
+    def plot_factor_exposure_heatmap(self, factor_exposure: pd.DataFrame) -> plt.Figure:
+        """Heatmap of factor exposure over time – alternative view"""
+        if not isinstance(factor_exposure, pd.DataFrame) or factor_exposure.empty:
+            fig, ax = plt.subplots(figsize=(12, 4))
+            ax.text(0.5, 0.5, "No factor exposure data", ha='center')
+            return fig
+
+        fig, ax = plt.subplots(figsize=(12, 6), facecolor='white')
+        # Transpose for heatmap: factors as y, dates as x
+        # Resample to monthly for readability if too many dates
+        if len(factor_exposure) > 200:
+            # Monthly resample mean
+            monthly = factor_exposure.resample('ME').mean()
+        else:
+            monthly = factor_exposure
+
+        im = ax.imshow(monthly.T.values, aspect='auto', cmap='RdYlGn', vmin=-1.5, vmax=1.5)
+        ax.set_yticks(range(len(monthly.columns)))
+        ax.set_yticklabels(sorted(monthly.columns), fontsize=8)
+        ax.set_title('Factor Exposure Heatmap (monthly avg)', fontweight='bold')
+        ax.set_xlabel('Time (months)')
+        plt.colorbar(im, ax=ax, shrink=0.8, label='Exposure')
+        plt.tight_layout()
+        return fig
+
     # ── Export methods – reproducible ──
     def export_all(self, equity: pd.Series, returns: pd.Series,
                    positions: Optional[pd.DataFrame] = None,
@@ -303,6 +359,7 @@ class ReportingEngine:
                    regime_series: Optional[pd.Series] = None,
                    canary_df: Optional[pd.DataFrame] = None,
                    benchmark: Optional[pd.Series] = None,
+                   factor_exposure: Optional[pd.DataFrame] = None,
                    prefix: str = "report") -> Dict[str, Path]:
         """
         Generate all plots and export to PNG, plus CSV/Excel/HTML/PDF
@@ -333,7 +390,7 @@ class ReportingEngine:
 
         outputs: Dict[str, Path] = {}
 
-        # Generate figures deterministically sorted order
+        # Generate figures deterministically sorted order – includes all requested reports
         plots = {
             "equity_curve": self.plot_equity_curve(equity, benchmark),
             "rolling_sharpe": self.plot_rolling_sharpe(returns),
@@ -350,6 +407,11 @@ class ReportingEngine:
             "regime_timeline": self.plot_regime_timeline(regime_series if regime_series is not None else pd.Series(dtype=object)),
             "canary_timeline": self.plot_canary_timeline(canary_df if canary_df is not None else pd.DataFrame()),
         }
+
+        # Factor exposure – required: each backtest must show factor exposure over time
+        if factor_exposure is not None and not factor_exposure.empty:
+            plots["factor_exposure"] = self.plot_factor_exposure(factor_exposure)
+            plots["factor_exposure_heatmap"] = self.plot_factor_exposure_heatmap(factor_exposure)
 
         # Add portfolio composition if weights provided (latest)
         if weights is not None and not weights.empty:
@@ -376,14 +438,21 @@ class ReportingEngine:
             # Workaround: create PDF with blank pages referencing PNG paths – for institutional, we generate PDF from HTML later
             pass
 
-        # For true PDF, we will create a multi-page PDF with all plots anew (reuse plot methods)
+        # For true PDF, we will create a multi-page PDF with all plots anew (reuse plot methods) – includes factor exposure
         # To avoid double computation, we regenerate and save into PDF
         pdf_path = self.output_dir / f"{prefix}_full_report.pdf"
         with PdfPages(pdf_path) as pdf:
             for plot_name in ["equity_curve", "rolling_sharpe", "rolling_sortino", "rolling_cagr",
                               "drawdown_curve", "drawdown_duration", "monthly_heatmap",
                               "yearly_returns", "rolling_volatility", "exposure", "turnover",
-                              "asset_allocation", "regime_timeline", "canary_timeline"]:
+                              "asset_allocation", "regime_timeline", "canary_timeline",
+                              "factor_exposure", "factor_exposure_heatmap", "portfolio_composition"]:
+                # For factor_exposure, need factor_exposure param
+                if plot_name in ("factor_exposure", "factor_exposure_heatmap") and (factor_exposure is None or factor_exposure.empty):
+                    continue
+                if plot_name == "portfolio_composition" and (weights is None or weights.empty):
+                    continue
+
                 # Regenerate fig
                 if plot_name == "equity_curve":
                     fig = self.plot_equity_curve(equity, benchmark)
@@ -413,6 +482,13 @@ class ReportingEngine:
                     fig = self.plot_regime_timeline(regime_series if regime_series is not None else pd.Series(dtype=object))
                 elif plot_name == "canary_timeline":
                     fig = self.plot_canary_timeline(canary_df if canary_df is not None else pd.DataFrame())
+                elif plot_name == "factor_exposure":
+                    fig = self.plot_factor_exposure(factor_exposure if factor_exposure is not None else pd.DataFrame())
+                elif plot_name == "factor_exposure_heatmap":
+                    fig = self.plot_factor_exposure_heatmap(factor_exposure if factor_exposure is not None else pd.DataFrame())
+                elif plot_name == "portfolio_composition":
+                    latest_w = weights.iloc[-1].to_dict() if isinstance(weights, pd.DataFrame) and not weights.empty else {}
+                    fig = self.plot_portfolio_composition(latest_w)
                 else:
                     continue
                 pdf.savefig(fig)
