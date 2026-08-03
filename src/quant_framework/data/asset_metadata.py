@@ -2,6 +2,7 @@
 Asset Metadata Engine – institutional level
 Each ticker: asset class, sector, industry, country, currency, beta, avg vol, avg CAGR, listing date, ETF issuer, theme, macro bucket, risk bucket
 Automatic classification: XLU=Utilities Defensive Low etc.
+Extended for dynamic universe: IPO date, delisting date, historical availability, AUM, tracking error, spread, turnover
 """
 
 from dataclasses import dataclass, asdict
@@ -28,16 +29,26 @@ class AssetMetadata:
     avg_volatility: float
     avg_cagr: float
     listing_date: Optional[pd.Timestamp]
-    etf_issuer: str
-    theme: str
-    macro_bucket: str
-    risk_bucket: str
+    delisting_date: Optional[pd.Timestamp] = None
+    etf_issuer: str = "Unknown"
+    theme: str = ""
+    macro_bucket: str = "Balanced"
+    risk_bucket: str = "Medium"
     description: str = ""
+    ipo_date: Optional[pd.Timestamp] = None
+    historical_availability: bool = True
+    aum: Optional[float] = None
+    tracking_error: Optional[float] = None
+    avg_spread_pct: Optional[float] = None
+    avg_turnover: Optional[float] = None
+    avg_volume: Optional[float] = None
+    is_delisted: bool = False
 
     def to_dict(self) -> Dict:
         d = asdict(self)
-        if d.get('listing_date') and isinstance(d['listing_date'], pd.Timestamp):
-            d['listing_date'] = d['listing_date'].isoformat()
+        for k in ['listing_date', 'delisting_date', 'ipo_date']:
+            if d.get(k) and isinstance(d[k], pd.Timestamp):
+                d[k] = d[k].isoformat()
         return d
 
 
@@ -64,6 +75,12 @@ KNOWN_ASSETS: Dict[str, Dict] = {
     "DBMF": {"asset_class": "ETF", "sector": "Alternative", "industry": "Managed Futures", "macro_bucket": "Alternative", "risk_bucket": "Medium", "beta": 0.2, "theme": "Managed Futures Replication", "etf_issuer": "iMGP", "country": "US", "currency": "USD"},
     "BTC-USD": {"asset_class": "Crypto", "sector": "Crypto", "industry": "Bitcoin", "macro_bucket": "Risk On", "risk_bucket": "Very High", "beta": 2.5, "theme": "Bitcoin", "etf_issuer": "N/A", "country": "Global", "currency": "USD"},
     "MES=F": {"asset_class": "Futures", "sector": "Broad Market", "industry": "Micro E-mini S&P 500", "macro_bucket": "Risk On", "risk_bucket": "Medium", "beta": 1.0, "theme": "Micro ES", "etf_issuer": "CME", "country": "US", "currency": "USD"},
+}
+
+# Known delisted / short-lived ETFs for survivorship bias demo
+KNOWN_DELISTED = {
+    "XIV": {"delisting_date": "2018-02-15", "reason": "Inverse VIX termination"},
+    "TVIX": {"delisting_date": "2020-12-31", "reason": "ETN delisted"},
 }
 
 
@@ -143,6 +160,52 @@ class AssetMetadataEngine:
         avg_vol = 20.0
         avg_cagr = 8.0
         listing_date = None
+        delisting_date = None
+        ipo_date = None
+        is_delisted = False
+        aum = None
+        tracking_error = None
+        avg_spread_pct = None
+        avg_turnover = None
+        avg_volume = None
+        historical_availability = True
+
+        # Check known delisted
+        if t in KNOWN_DELISTED:
+            delisting_date = pd.to_datetime(KNOWN_DELISTED[t]["delisting_date"])
+            is_delisted = True
+            historical_availability = True
+
+        # Try yfinance info for IPO, AUM, etc
+        if HAS_YF:
+            try:
+                info = yf.Ticker(t).info
+                if info:
+                    sector = info.get("sector", sector) if info.get("sector") else sector
+                    industry = info.get("industry", industry) if info.get("industry") else industry
+                    country = info.get("country", country) if info.get("country") else country
+                    currency = info.get("currency", currency) if info.get("currency") else currency
+                    beta = float(info.get("beta", beta)) if info.get("beta") is not None else beta
+                    # totalAssets as AUM proxy
+                    if info.get("totalAssets"):
+                        try:
+                            aum = float(info["totalAssets"])
+                        except Exception:
+                            pass
+                    if info.get("firstTradeDate"):
+                        try:
+                            listing_date = pd.to_datetime(info["firstTradeDate"], unit='s', utc=True)
+                            ipo_date = listing_date
+                        except Exception:
+                            pass
+                    # averageVolume
+                    if info.get("averageVolume"):
+                        try:
+                            avg_volume = float(info["averageVolume"])
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
         df = self.cache_data.get(t)
         if df is not None and not df.empty and 'Close' in df.columns:
@@ -155,19 +218,73 @@ class AssetMetadataEngine:
                     if years > 0:
                         total_return = close.iloc[-1] / close.iloc[0] - 1
                         avg_cagr = float(((1 + total_return) ** (1 / years) - 1) * 100)
-                    listing_date = close.index.min()
+                    if listing_date is None:
+                        listing_date = close.index.min()
+                    if ipo_date is None:
+                        ipo_date = close.index.min()
+                    # Infer delisting if last day significantly before today and not in known active
+                    last_day = close.index.max()
+                    if last_day.tzinfo is not None:
+                        last_day = last_day.tz_localize(None)
+                    today = pd.Timestamp.now()
+                    if (today - last_day).days > 90 and t not in ["SPY", "QQQ", "TQQQ", "XLU", "XLP", "XLV", "XLE", "XLB", "XLI", "XLK", "XLF", "XLY"]:
+                        # If last trading day >90 days ago, consider delisted for survivorship demo
+                        # Only mark as delisted if not in active list and not already marked
+                        if delisting_date is None and t in KNOWN_DELISTED:
+                            # Already handled
+                            pass
+                        elif delisting_date is None and (today - last_day).days > 180:
+                            # Heuristic: if no data for 180 days, treat as delisted
+                            delisting_date = last_day
+                            is_delisted = True
+
+                    # Compute avg volume, spread proxy, turnover, tracking error
+                    if 'Volume' in df.columns:
+                        vol_series = df['Volume'].dropna()
+                        if not vol_series.empty:
+                            avg_volume = float(vol_series.tail(20).mean()) if avg_volume is None else avg_volume
+                            # Turnover proxy: volume / avg volume
+                            if len(vol_series) >= 40:
+                                avg_hist = vol_series.iloc[-40:-20].mean()
+                                avg_recent = vol_series.tail(20).mean()
+                                if avg_hist != 0:
+                                    avg_turnover = float(avg_recent / avg_hist)
+
+                    if 'High' in df.columns and 'Low' in df.columns and 'Close' in df.columns:
+                        recent = df.tail(20)
+                        spread_proxy = ((recent['High'] - recent['Low']) / recent['Close'].replace(0, np.nan)).mean()
+                        if not pd.isna(spread_proxy):
+                            avg_spread_pct = float(spread_proxy)
+
+                    # Tracking error vs SPY if SPY available
+                    if 'SPY' in self.cache_data and self.cache_data['SPY'] is not None and not self.cache_data['SPY'].empty:
+                        spy_close = self.cache_data['SPY']['Close'].dropna()
+                        # Align
+                        aligned = pd.concat([close.pct_change(), spy_close.pct_change()], axis=1, join='inner').dropna()
+                        if len(aligned) >= 60:
+                            aligned.columns = ['asset', 'spy']
+                            te = (aligned['asset'] - aligned['spy']).std() * np.sqrt(252)
+                            tracking_error = float(te * 100)  # %
             except Exception:
                 pass
 
         if t not in KNOWN_ASSETS or "risk_bucket" not in known:
             risk_bucket = self._classify_risk_bucket(beta, avg_vol, asset_class)
 
+        # Historical availability: if listing date is in future relative to today, not available
+        # For our purposes, if ticker has data, it's historically available from listing_date onwards
+        if listing_date is not None and ipo_date is None:
+            ipo_date = listing_date
+
         meta = AssetMetadata(
             ticker=t, asset_class=asset_class, sector=sector, industry=industry, country=country,
             currency=currency, beta=round(float(beta), 2), avg_volatility=round(float(avg_vol), 2),
-            avg_cagr=round(float(avg_cagr), 2), listing_date=listing_date, etf_issuer=etf_issuer,
-            theme=theme, macro_bucket=macro_bucket, risk_bucket=risk_bucket,
-            description=f"{t} – {sector} / {theme} – {macro_bucket} – {risk_bucket} risk"
+            avg_cagr=round(float(avg_cagr), 2), listing_date=listing_date, delisting_date=delisting_date,
+            etf_issuer=etf_issuer, theme=theme, macro_bucket=macro_bucket, risk_bucket=risk_bucket,
+            description=f"{t} – {sector} / {theme} – {macro_bucket} – {risk_bucket} risk",
+            ipo_date=ipo_date, historical_availability=historical_availability,
+            aum=aum, tracking_error=tracking_error, avg_spread_pct=avg_spread_pct,
+            avg_turnover=avg_turnover, avg_volume=avg_volume, is_delisted=is_delisted
         )
         self._metadata_cache[t] = meta
         return meta
@@ -182,8 +299,10 @@ class AssetMetadataEngine:
                 result[t] = AssetMetadata(
                     ticker=t, asset_class="Unknown", sector="Unknown", industry="Unknown",
                     country="US", currency="USD", beta=1.0, avg_volatility=20.0, avg_cagr=5.0,
-                    listing_date=None, etf_issuer="Unknown", theme="Unknown",
-                    macro_bucket="Balanced", risk_bucket="Medium", description=f"{t} unknown"
+                    listing_date=None, delisting_date=None, etf_issuer="Unknown", theme="Unknown",
+                    macro_bucket="Balanced", risk_bucket="Medium", description=f"{t} unknown",
+                    ipo_date=None, historical_availability=True, aum=None, tracking_error=None,
+                    avg_spread_pct=None, avg_turnover=None, avg_volume=None, is_delisted=False
                 )
         return result
 
