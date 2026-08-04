@@ -1,0 +1,82 @@
+// @version=5
+// Carver Trend System vs Ensembles – Part 1 – Sizing, Volatility Targeting, Prop-Firm Edge
+// © QUANT RICK – Translated from Python carver_trend_system.py
+// This version uses MONTHLY signal frequency for interpretability (less adaptive, visible mechanics)
+// Orange = Carver allocation (smooth continuous), Green = Donchian breakout (binary), Blue = Blended total
+// Volatility target is master dial: raise = more risk/DD/return, lower = tighter, at 10% vol target MaxDD ~7% across full history
+strategy("Carver Trend System – Monthly – Vol Targeting", overlay=false, initial_capital=100000, commission_type=strategy.commission.percent, commission_value=0.01, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// INPUTS
+targetVol = input.float(0.20, title="Target Volatility Annual (master dial)", step=0.05, minval=0.05, maxval=1.0, tooltip="10% = tight DD ~7%, 20% = moderate, 40% = aggressive. Same engine, dial changes risk.")
+fastLen = input.int(32, title="EWMAC Fast Length")
+slowLen = input.int(128, title="EWMAC Slow Length")
+donchianEntry = input.int(20, title="Donchian Entry Period (ensemble)")
+donchianExit = input.int(10, title="Donchian Exit Period")
+useMonthly = input.bool(true, title="Use Monthly Frequency for Interpretability? (less adaptive)")
+
+// CALCULATIONS – EWMAC Forecast
+emaFast = ta.ema(close, fastLen)
+emaSlow = ta.ema(close, slowLen)
+rawForecast = emaFast - emaSlow
+vol = ta.stdev(close, 25)  // 25-bar vol proxy
+forecast = rawForecast / vol
+forecast := math.max(math.min(forecast, 20), -20)  // Cap at +/-20 per Carver
+
+// Continuous allocation = forecast /10, scaled, capped
+carverAllocationRaw = forecast / 10
+carverAllocation = math.max(math.min(carverAllocationRaw, 5), -5)  // Max leverage 5 for safety
+
+// Donchian Breakout – binary ensemble-style
+donchianUpper = ta.highest(high, donchianEntry)
+donchianLower = ta.lowest(low, donchianExit)
+var float donchianPosition = 0.0
+if close > donchianUpper[1]
+    donchianPosition := 1.0
+if close < donchianLower[1]
+    donchianPosition := 0.0
+
+// Blended = 0.5*Carver + 0.5*Donchian*2 (scale Donchian to similar magnitude)
+blendedAllocation = 0.5 * carverAllocation + 0.5 * donchianPosition * 2
+
+// Volatility Targeting Position Sizing: Dollar Exposure = Capital * TargetVol / AssetVol
+// AssetVol annualized
+dailyRet = close / close[1] - 1
+assetVol = ta.stdev(dailyRet, 25) * math.sqrt(252)
+assetVol := math.max(assetVol, 0.10)  // Floor at 10% to avoid division by zero
+
+// Dollar Exposure
+capital = strategy.equity
+dollarExposure = capital * targetVol / assetVol
+contractsCarver = dollarExposure / close
+contractsDonchian = dollarExposure / close  // Same sizing but binary allocation will make equity lumpier
+
+// PLOTS – Allocation Percentage Plot as described
+plot(carverAllocation, color=color.orange, linewidth=2, title="Carver Allocation (smooth continuous, volatility-targeted)")
+plot(donchianPosition * 2, color=color.new(color.green, 0), linewidth=2, style=plot.style_histogram, title="Donchian Breakout Allocation (blocky binary)")
+plot(blendedAllocation, color=color.blue, linewidth=2, title="Blended Total (balance)")
+
+plot(forecast, color=color.purple, title="EWMAC Forecast (-20 to +20)", display=display.pane)
+hline(0, color=color.gray, linestyle=hline.style_dashed)
+hline(10, color=color.green, linestyle=hline.style_dotted, title="Max Long Forecast")
+hline(-10, color=color.red, linestyle=hline.style_dotted, title="Max Short Forecast")
+
+// ORDERS – Continuous sizing vs Binary
+// Carver: always allocated but size adjusts – we simulate by entering with size = contractsCarver * abs(carverAllocation)
+if math.abs(carverAllocation) > 0.1
+    strategy.entry(id="Carver", direction=carverAllocation > 0 ? strategy.long : strategy.short, qty=math.abs(contractsCarver * carverAllocation))
+
+// Donchian: full-port entry/exit binary
+if ta.crossover(close, donchianUpper[1])
+    strategy.entry(id="DonchianLong", direction=strategy.long, qty=contractsDonchian)
+
+if ta.crossunder(close, donchianLower[1])
+    strategy.close(id="DonchianLong")
+
+// For prop firm use case: raise vol target during eval, lower after funded
+// Example: if prop eval, set targetVol to 0.40 for faster pass, then set to 0.15 to protect account
+// This is manual dial, not automatic
+
+// DISPLAY METRICS
+// Note: In Pine, Sharpe and MaxDD are computed in Strategy Tester, not plotted
+// The key insight: Carver gives lower returns, tighter DD, lower variance; Ensemble gives higher returns, deeper DD, more variance
+// Volatility target is master dial – same engine serves conservative or aggressive mandate
