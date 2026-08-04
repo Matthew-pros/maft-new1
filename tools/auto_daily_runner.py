@@ -10,10 +10,13 @@ from datetime import datetime
 from pathlib import Path
 import sys
 
+# Ensure tools/ is in path before local imports
+sys.path.insert(0, str(Path(__file__).parent))
+
 # Import our tools
 from regime_engine_6 import fetch_macro, classify_regime, REGIMES
 # We will import temacd scanner functions
-sys.path.insert(0, str(Path(__file__).parent))
+
 try:
     from temacd_screener import scan_tickers, QUANT_RICK_30_DEDUP, export_html as temacd_export_html
     HAS_TEMACD = True
