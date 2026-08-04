@@ -1,0 +1,23 @@
+// MultiCharts Oscillator Sub-Chart for TQQQ TEMACD
+// Plot MACD Line, Signal Line, Delta Histogram
+
+Inputs:
+    fastLen(61),
+    slowLen(70),
+    macdLen(15);
+
+Vars:
+    MACDLine(0),
+    aMACD(0),
+    delta(0);
+
+MACDLine = XAverage(Close, fastLen) - XAverage(Close, slowLen);
+aMACD = XAverage(MACDLine, macdLen);
+delta = MACDLine - aMACD;
+
+Plot1(MACDLine, "MACD", Blue);
+Plot2(aMACD, "Signal", RGB(255,165,0));
+Plot3(delta, "Delta", iff(delta >= 0, Lime, Red));
+Plot4(0, "Zero", DarkGray);
+
+// Histogram style – in Format Indicator set Plot3 as Histogram

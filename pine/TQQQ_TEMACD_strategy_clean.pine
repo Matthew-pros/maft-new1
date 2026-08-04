@@ -1,0 +1,60 @@
+// @version=5
+// QUANT RICK - TQQQ TEMACD Cleaned - Validated for TradingView v5
+strategy("TQQQ TEMACD - CLEAN", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100.0, initial_capital=100000, commission_type=strategy.commission.percent, commission_value=0.01)
+
+// INPUTS
+disp_ind = input.string("Equity", title="Display", options=["Strategy","Equity","Open Profit","Gross Profit","Net Profit"])
+disp_col = input.color(color.blue, title="Display Color")
+lvg = input.float(defval=1.0, step=0.1, title="Leverage")
+src = input.source(defval=close, title="Source")
+len_1 = input.int(title="First EMA length", defval=5, minval=1, maxval=9999)
+len_2 = input.int(title="Second EMA length", defval=50, minval=1, maxval=9999)
+len_3 = input.int(title="Third EMA length", defval=222, minval=1, maxval=9999)
+fastLength = input.int(61, title="MACD Fast Length")
+slowLength = input.int(70, title="MACD Slow Length")
+macdLength = input.int(15, title="MACD Signal Length")
+tradeDirection = input.string(title="Trade Direction", options=["Long","Short","Both"], defval="Long")
+startDate = input.time(title="Start Date", defval=timestamp("01 Jan 2018 00:00"))
+endDate = input.time(title="End Date", defval=timestamp("31 Dec 2170 23:59"))
+
+// CALCULATIONS
+EMA1 = ta.ema(close, len_1)
+EMA2 = ta.ema(close, len_2)
+EMA3 = ta.ema(close, len_3)
+MACD = ta.ema(close, fastLength) - ta.ema(close, slowLength)
+aMACD = ta.ema(MACD, macdLength)
+delta = MACD - aMACD
+
+// PLOTS
+plot(EMA1, color=color.new(color.blue, 0), linewidth=2, title="EMA 1")
+plot(EMA2, color=color.new(color.white, 0), linewidth=2, title="EMA 2")
+plot(EMA3, color=color.new(color.orange, 0), linewidth=2, title="EMA 3")
+macd_line = plot(MACD, color=color.new(color.blue, 0), linewidth=2, title="MACD Line", display=display.pane)
+signal_line = plot(aMACD, color=color.new(color.orange, 0), linewidth=2, title="Signal Line", display=display.pane)
+plot(delta, color=delta >= 0 ? color.new(color.lime, 50) : color.new(color.red, 50), style=plot.style_histogram, linewidth=3, title="MACD Histogram", display=display.pane)
+hline(0, color=color.gray, linestyle=hline.style_dashed, title="MACD Zero Line")
+fill(macd_line, signal_line, color=MACD >= aMACD ? color.new(color.green, 80) : color.new(color.red, 80), title="MACD Fill")
+
+// CONDITIONS
+inDateRange = time >= startDate and time < endDate
+longOK = tradeDirection == "Long" or tradeDirection == "Both"
+shortOK = tradeDirection == "Short" or tradeDirection == "Both"
+longCondition = ta.crossover(delta, 0) or ta.crossover(EMA1, EMA2) or ta.crossover(EMA1, EMA3) or ta.crossover(EMA2, EMA3)
+shortCondition = ta.crossunder(delta, 0) or ta.crossunder(EMA1, EMA2) or ta.crossunder(EMA1, EMA3) or ta.crossunder(EMA2, EMA3)
+contracts = strategy.equity / src
+
+if longCondition and inDateRange and longOK
+    strategy.entry(id="long", direction=strategy.long, qty=contracts * lvg)
+if shortCondition and inDateRange and shortOK
+    strategy.entry(id="short", direction=strategy.short, qty=contracts * lvg)
+if strategy.position_size > 0 and shortCondition
+    strategy.close(id="long", comment="Exit Long - TEMACD Short Signal")
+if strategy.position_size < 0 and longCondition
+    strategy.close(id="short", comment="Exit Short - TEMACD Long Signal")
+
+// ALERTS
+alertcondition(longCondition, title="TEMACD LONG ENTRY", message="TQQQ TEMACD: LONG ENTRY on {{ticker}} at {{close}}")
+alertcondition(shortCondition, title="TEMACD SHORT/EXIT", message="TQQQ TEMACD: SHORT/EXIT on {{ticker}} at {{close}}")
+
+// DISPLAY
+plot(disp_ind == "Equity" ? strategy.equity / strategy.initial_capital : na, color=disp_col, title="Strategy Equity")
